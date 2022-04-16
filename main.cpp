@@ -115,7 +115,7 @@ public:
 		}
 	}
 
-	void cluster_adj(int num_clusters, int nodes_in_cluster){
+	void cluster_adj(int num_clusters, int nodes_in_cluster, int clusters_connectivity){
 		std::random_device rd;
 		std::mt19937 gen(rd());
 		std::uniform_int_distribution<> dis_int(0, nodes_in_cluster - 1);
@@ -148,15 +148,27 @@ public:
 		itr = adj.begin();
 		std::vector<double> row(n_nodes);
 		int N = 0;
+		int n = 0;
 		int r = 0;
-		int j = 0;		
+		int j = 0;
+		int cont = 0;		
 		for(int index_cluster = 0; index_cluster != num_clusters; ++index_cluster){
 			j=0;
+			cont = 0;
 			for (;j != nodes_in_cluster; ++j, ++itr, ++r) {
 				for (int i = 0; i != in_degree; ++i) {
 					N = dis_int(gen);
 					if (row[N + index_cluster * nodes_in_cluster] == 0 && (adj[N + index_cluster * nodes_in_cluster])[r] == 0 && (N + index_cluster * nodes_in_cluster) != r) {
 						row[N + index_cluster * nodes_in_cluster] = dis_real(gen);
+						if (cont < clusters_connectivity) {
+							++cont;
+							n = dis_int(gen);
+							for(int k = 0; k != num_clusters; k++) {
+								if(k != index_cluster) {
+									row[n + k * nodes_in_cluster] = dis_real(gen);
+								}
+							}
+						}
 					}
 					else { --i; }
 				}
@@ -346,6 +358,6 @@ int main() {
 	}*/
 	//G.print_adj_txt();
 
-	G.cluster_adj(2, 4);
+	G.cluster_adj(2, 4, 1);
 	G.print_adj();
 }
