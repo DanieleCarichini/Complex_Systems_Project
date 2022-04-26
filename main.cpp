@@ -1,5 +1,6 @@
 #include<iostream>
 #include<vector>
+#include<algorithm>
 #include<cassert>
 #include<cmath>
 #include<random>
@@ -25,7 +26,7 @@ public:
 
 	int get_clock() { return clock; }
 
-	double get_state() {
+	int get_state() {
 		return state;
 	}
 
@@ -84,6 +85,7 @@ protected:
 	int retard = 0;
 	std::vector<std::vector<double>> memory;
 	std::vector<std::vector<double>> adj{ 0 }; //elemento 1 2 è diretto da 2 ad 1(è la trasposta...)
+	std::vector<std::vector<double>> transpose{ 0 };
 	std::vector<Neuron> state;
 	int time = 0;
 
@@ -106,6 +108,7 @@ public:
 		retard = retard_ - 1;
 		assert(in_degree < (n_nodes - 1));
 		state.resize(n_nodes);
+		adj.resize(n_nodes, std::vector<double>(n_nodes));
 		if(!is_cluster){
 			generate_adj();
 		}
@@ -113,52 +116,14 @@ public:
 		for (int i = 0; i != memory.size(); ++i) {
 			memory[i].resize(n_nodes);
 		}
-		adj.resize(n_nodes);
-		for (int i = 0; i != n_nodes; ++i) {
-			adj[i].resize(n_nodes);
-		}
 	}
 
-	//delete this once you checked bipartite works
-	void bipartite_adj(){
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<> dis_int(0, n_nodes/2 - 1);
-		std::uniform_real_distribution<> dis_real(5, 10);
-
-		//Clear adjacency matrix
-		auto itr = adj.begin();
-		auto const endr = adj.end();
-		auto itc = itr->begin();
-		auto endc = itr->end();
-		for(; itr != endr; ++itr){
-			itc = itr->begin();
-			endc = itr->end();
-			for(; itc != endc; ++itc){
-				(*itc) = 0;
+	void create_transpose(){
+		transpose.resize(n_nodes, std::vector<double>(n_nodes));
+		for (int i = 0; i < n_nodes; ++i){
+			for (int j = 0; j < n_nodes; ++j) {
+				transpose[j][i] = adj[i][j];
 			}
-		}
-
-		//Create a bipartite adjacency matrix
-		itr = adj.begin();
-		std::vector<double> row(n_nodes);
-		int N = 0;
-		int r = 0;
-		int half = 1;
-		for (;itr != endr; ++itr, ++r) {
-			if (r >= n_nodes / 2) {half = 0;}
-			for (int i = 0; i != in_degree; ++i) {
-				N = dis_int(gen);
-				if (row[N + half * n_nodes / 2] == 0 && (adj[N + half * n_nodes / 2])[r] == 0) {
-					row[N + half * n_nodes / 2] = dis_real(gen);
-				}
-				else { --i; }
-			}
-			*itr = row;
-			for (auto it = row.begin(); it != row.end(); it++) {
-				*it = 0;
-			}
-
 		}
 	}
 
@@ -210,9 +175,8 @@ public:
 		return int_state;
 	}
 
+	//Activate each neuron with a probability of 50%. Each activated neuron starts with time_active = 0
 	void random_init() {
-		//srand((unsigned) std::time(0));
-		//std::random_device rd;  //Will be used to obtain a seed for the random number engine
 		std::mt19937 gen((unsigned) std::time(0));
 		std::uniform_int_distribution<> dis_binary(0, 1);
 
@@ -225,6 +189,25 @@ public:
 			else { state[i].set_state(0); }
 		}
 	}
+
+	//Activate each neuron with probability prob. Choose random how to set the initial clock from 0 to time_active.
+	void activate(double prob){
+		assert(prob <= 1 && prob >= 0);
+		std::mt19937 gen((unsigned) std::time(0));
+		std::uniform_real_distribution<> prob_active(0, 1);
+		std::uniform_int_distribution<> clock(0, time_active);
+
+		for(int i = 0; i != n_nodes; ++i){
+			double activation = prob_active(gen);
+			int time_activation = clock(gen);
+			if( activation < prob){
+				state[i].set_state(1);
+				state[i].set_clock(time_activation);
+			} else {
+				state[i].set_state(0);
+			}
+		}
+	} 
 
 	void all_firing() {
 		for (int i = 0; i != n_nodes; ++i) {
@@ -241,6 +224,20 @@ public:
 
 	void print_sync(){
 		std::cout << get_sync() << '\n';
+	}
+
+	//Compute average of absolute values of sync after steps interactions
+	void average_sync(int steps){
+		for(int i = 0; i != steps; ++i){
+			next_step();
+		}
+
+		double sync_average = 0;
+		for(int i = 0; i != (time_active + time_passive); ++i){
+			sync_average += std::abs(get_sync());
+			next_step();
+		}
+		std::cout << "\n" << "Average sync after " << steps << " steps:" << '\t' << sync_average / (time_active + time_passive);
 	}
 
 	//basic synchronization
@@ -300,6 +297,91 @@ public:
 		SaveFile.close();
 	}
 
+	//CSV file. First column = vertices; second column = step number; third column = evolution of first vertex, ...
+	//To create graph, upload file on mathcha(Complex_systems)
+	void write_CSV(int num_visible, int num_interactions){
+		std::mt19937 gen((unsigned) std::time(0));
+		std::uniform_int_distribution<> choose_neurons(0, n_nodes - 1);
+		std::vector<int> visible;
+		int neuron_visible;
+		assert(num_visible <= n_nodes);
+
+		//extract nodes and memorize them in a sorted vector
+		for(int i = 0; i != num_visible; ++i){
+			neuron_visible = choose_neurons(gen);
+			visible.push_back(neuron_visible);
+		}
+		std::sort(visible.begin(), visible.end());
+
+		//Write CSV file
+		int stop = num_interactions;
+		if(num_visible > num_interactions) {stop = num_visible;}
+		std::ofstream SaveFile("CSV.txt");
+		for(int i = 0; i != stop; ++i){
+			if(i < num_visible){
+				SaveFile << "V" << visible[i] << ",";
+			} else {SaveFile << ",";}
+			if(i < num_interactions){
+				SaveFile << i << ",";
+				for(int vertex = 0; vertex != num_visible; ++vertex){
+					SaveFile << state[visible[vertex]].get_state() << ",";
+				}
+				SaveFile << '\n';
+			} else {SaveFile << '\n';}
+			next_step();
+		}
+		SaveFile.close();
+	}
+
+	//normalize the firing of a neuron between its "axons"
+	void normalize(){
+		int row = 0;
+		int col = 0;
+		double fire = 0.0;
+		for (;col != n_nodes; ++col) {
+			fire = 0.0;
+			for (row=0 ;row != n_nodes; ++row) {
+					fire += adj[row][col];
+				}
+			for (row=0 ;row != n_nodes; ++row) {
+				if(adj[row][col] != 0){
+					adj[row][col] /= fire;
+				}
+			}
+		}
+		
+	}
+
+	//write adj in Networkx.txt file as adjlist
+	void write_adjlist(){
+		create_transpose();
+
+		auto itr = transpose.begin();
+		auto const endr = transpose.end();
+		auto endc = itr->end();
+		auto itc = itr->begin();
+		int row = 1;
+		int col = 1;
+		bool first_time = true;
+		std::ofstream SaveFile("Networkx.txt");
+		for (;itr != endr;++itr, ++row) {
+			itc = itr->begin();
+			endc = itr->end();
+			col = 1;
+			if(first_time != true){
+				SaveFile << "\n";
+			}
+			SaveFile << row << "\t" ;
+			for (;itc != endc;++itc, ++col) {
+				if((*itc) != 0){
+					SaveFile << col << "\t";  //this function prints the adj matrix in a txt file
+				}
+			}
+			first_time = false;
+		}
+		SaveFile.close();
+	}
+
 	void write_adj() {
 		auto itr = adj.begin();
 		auto const endr = adj.end();
@@ -321,7 +403,6 @@ public:
 		}
 		inFile.close();
 	}
-
 };
 
 class Bipartite : public Graph{
@@ -533,9 +614,9 @@ class Cluster : public Graph{
 int main() {
 	//Parameters used for bipartite graph simulation
 	/*
-	int time_active = 1;
-	int time_passive = 1;
-	int retard = 1;
+	int time_active = 3;
+	int time_passive = 4;
+	int retard = 3;
 	int number_neurons = 1000;
 	int in_degree = 2;
 	/**/
@@ -544,27 +625,34 @@ int main() {
 	int time_active = 2;
 	int time_passive = 3;
 	int retard = 4;
-	int number_neurons = 6;
-	int in_degree = 1;
+	int number_neurons = 100;
+	int in_degree = 20;
 	int num_cluster = 3;
 	int nodes_in_cluster = 4;
 	int intercluster = 5;
 	/**/
 
-	//Graph G(number_neurons, in_degree, time_active, time_passive, retard);
-	Cluster G(num_cluster, nodes_in_cluster, intercluster, in_degree, time_active, time_passive, retard);
+	Graph G(number_neurons, in_degree, time_active, time_passive, retard);
+	//Cluster G(num_cluster, nodes_in_cluster, intercluster, in_degree, time_active, time_passive, retard);
 	//Bipartite G(number_neurons, in_degree, time_active, time_passive, retard);
 
-	G.random_init();
+	//G.write_adjlist();
+	//G.print_adj();
+	G.activate(0.6);
 	//G.bias_init(0.8, 0.2);
+	G.normalize();
+	//G.random_init();
 	//G.print_adj();
 	//G.print_adj_txt();
 	//G.write_adj();
+	G.write_CSV(40, 100);
+
 	int steps = 100;
+	//G.average_sync(steps);
 	for (int i = 0; i != steps; ++i) {
 		//G.print_state();
-		G.print_sync();
-		G.next_step();
+		//G.print_syncs();
+		//G.next_step();
 	}
 
 }
